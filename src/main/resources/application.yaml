@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: api-gateway-throttling
+  threads:
+    virtual:
+      enabled: true
+  cache:
+    cache-names:
+      - rate-limit-bucket
+    caffeine:
+      spec: maximumSize=100000,expireAfterAccess=3600s
