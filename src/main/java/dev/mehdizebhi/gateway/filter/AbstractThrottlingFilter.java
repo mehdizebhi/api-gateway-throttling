@@ -24,11 +24,17 @@ public abstract class AbstractThrottlingFilter implements GatewayFilter, KeyReso
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         var bucket = proxyManager.getProxy(resolveKey(exchange.getRequest()), () -> bucketConfigurationResolver.getBucketConfiguration(exchange.getRequest()));
-        if (bucket.tryConsume(1)) {
-            return chain.filter(exchange);
+        var probe = bucket.tryConsumeAndReturnRemaining(1);
+        if (probe.isConsumed()) {
+            return chain.filter(exchange)
+                    .then(Mono.fromRunnable(() -> {
+                        exchange.getResponse().getHeaders().add("X-Rate-Limit-Remaining", Long.toString(probe.getRemainingTokens()));
+                    }));
         } else {
+            long waitForRefill = probe.getNanosToWaitForRefill() / 1_000_000_000;
             exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
             exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+            exchange.getResponse().getHeaders().add("X-Rate-Limit-Retry-After-Seconds", String.valueOf(waitForRefill));
             String body = "{\"status\": 429, \"message\": \"Too many requests\"}";
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
